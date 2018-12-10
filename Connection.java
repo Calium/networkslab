@@ -11,13 +11,19 @@ public class Connection {
 
     /// CLIENT
     private Socket m_Client; // The client using the proxy
-    private DataInputStream m_ClientReader; // Read messages from client
-    private DataOutputStream m_ClientWriter; // Write messages to client
+    private BufferedReader m_ClientReader; // Read messages from client
+    private PrintWriter m_ClientWriter; // Write messages to client
 
     /// TARGET
     private Socket m_Target; // The target destination
-    private DataInputStream m_TargetReader; // Read messages from target
-    private DataOutputStream m_TargetWriter; // Write messages to target
+    private BufferedReader m_TargetReader; // Read messages from target
+    private PrintWriter m_TargetWriter; // Write messages to target\
+
+    // CONNECTION DATA
+    private String m_ClientIP;
+    private String m_TargetIP;
+    private int m_ClientPort;
+    private int m_TargetPort;
 
     private ProxyServer m_Parent; // To notify when the connection is closed
 
@@ -28,8 +34,8 @@ public class Connection {
 
     public boolean start() {
         try {
-            m_ClientReader = new DataInputStream(m_Client.getInputStream());
-            m_ClientWriter = new DataOutputStream(m_Client.getOutputStream());
+            m_ClientReader = new BufferedReader(new InputStreamReader(m_Client.getInputStream()));
+            m_ClientWriter = new PrintWriter(m_Client.getOutputStream());
         } catch (IOException ioe) {
             print("Failed to start open streams.");
             return false;
@@ -58,14 +64,17 @@ public class Connection {
         byte[] portB = new byte[2];
         byte[] ipB = new byte[4];
 
-        try {
-            System.out.println("DEBUG: Socks version: " + m_ClientReader.read());
-            System.out.println("DEBUG: Socks command: " + m_ClientReader.read());
-            m_ClientReader.read(portB);
-            m_ClientReader.read(ipB);
-            System.out.println("DEBUG: Destination Port: " + (port = parsePort(portB)));
-            System.out.println("DEBUG: Destination IP: " + (ip = parseIP(ipB)));
-
+        try
+        {
+            System.out.println("DEBUG: Socks version: " + m_Client.getInputStream().read());
+            System.out.println("DEBUG: Socks command: " + m_Client.getInputStream().read());
+            m_Client.getInputStream().read(portB);
+            m_Client.getInputStream().read(ipB);
+            System.out.println("DEBUG: Destination Port: " + (m_TargetPort = parsePort(portB)));
+            System.out.println("DEBUG: Destination IP: " + (m_TargetIP = parseIP(ipB)));
+            while(m_Client.getInputStream().read() != 0x00) {} // Skip UID and NULL byte - Clear buffer
+            m_ClientIP = "127.0.0.1";
+            m_ClientPort = m_Client.getPort();
         }
         catch (IOException ioe)
         {
@@ -76,21 +85,21 @@ public class Connection {
 
         try
         {
-            m_Target = new Socket(ip, port);
-            m_TargetWriter = new DataOutputStream(m_Target.getOutputStream());
-            m_TargetReader = new DataInputStream(m_Target.getInputStream());
+            m_Target = new Socket(m_TargetIP, m_TargetPort);
+            m_TargetWriter = new PrintWriter(m_Target.getOutputStream());
+            m_TargetReader = new BufferedReader(new InputStreamReader(m_Target.getInputStream()));
 
-            m_ClientWriter.write(prepareResponse(90, portB, ipB));
-            m_ClientWriter.flush();
-            System.out.println("Successful connection from " + m_Client.getRemoteSocketAddress().toString() + " to " + m_Target.getRemoteSocketAddress().toString());
+            m_Client.getOutputStream().write(prepareResponse(90, portB, ipB));
+            m_Client.getOutputStream().flush();
+            System.out.println("Successful connection from " + m_ClientIP + ":" + m_ClientPort + " to " + m_TargetIP + ":" + m_TargetPort);
         }
         catch (IOException ioe)
         {
             print("Failed to initiate connection with target.");
             try
             {
-                m_ClientWriter.write(prepareResponse(91, portB, ipB));
-                m_ClientWriter.flush();
+                m_Client.getOutputStream().write(prepareResponse(91, portB, ipB));
+                m_Client.getOutputStream().flush();
             } catch (IOException ioe2) {} // really?
             close();
             return false;
@@ -115,41 +124,31 @@ public class Connection {
         Thread clientThread = new Thread(new Runnable() {
             @Override
             public void run() {
-                String clientInput;
                 String message = "";
                 try
                 {
-                    while ((clientInput = m_ClientReader.readLine()) != null)//(m_ClientReader.read(buffer)) > 0)
+                    while (m_ClientReader.ready())
                     {
-                        if (clientInput.equals(""))
-                        {
-                            System.out.println("DEBUG: Final Message is: " + message);
-                            m_TargetWriter.writeBytes(message);
-                            m_TargetWriter.flush();
-                            message = "";
-                        }
-                        else
-                        {
-                            if (!message.equals(""))
-                            {
-                                message += "\r\n";
-                            }
-                            message += clientInput;
-                            System.out.println("DEBUG: MESSAGE: " + clientInput);
-                        }
-                        //m_TargetWriter.write(buffer);
-                        //m_TargetWriter.writeUTF(clientInput);
-                        //m_TargetWriter.flush();
+                        message += m_ClientReader.readLine() + "\r\n";
+                    }
+                    if (!message.equals(""))
+                    {
+                        // System.out.println("DEBUG: Final Message is:\r\n" + message);
+                        m_TargetWriter.print(message);
+                        m_TargetWriter.flush();
+                        message = ""; // Prepare for multi message handling
                     }
                 }
                 catch (IOException ioe)
                 {
                     print("Client reader closed. Terminating connection...");
                 }
+                /*
                 finally
                 {
                     close();
                 }
+                */
             }
         });
         clientThread.start();
@@ -157,27 +156,23 @@ public class Connection {
         Thread targetThread = new Thread(new Runnable() {
             @Override
             public void run() {
-                String targetInput;
                 String message = "";
+                boolean waitingForResponse = true;
                 try
                 {
-                    while ((targetInput = m_TargetReader.readLine()) != null)
+                    while (waitingForResponse)
                     {
-                        if (targetInput.equals(""))
+                        while (m_TargetReader.ready())
                         {
-                            System.out.println("DEBUG: Final Message is: " + message);
-                            m_TargetWriter.writeBytes(message);
-                            m_TargetWriter.flush();
-                            message = "";
+                            message += m_TargetReader.readLine() + "\r\n";
                         }
-                        else
+                        if (!message.equals(""))
                         {
-                            if (!message.equals(""))
-                            {
-                                message += "\r\n";
-                            }
-                            message += targetInput;
-                            System.out.println("DEBUG: MESSAGE: " + targetInput);
+                            //System.out.println("DEBUG: Final Message is:\r\n" + message);
+                            m_ClientWriter.print(message);
+                            m_ClientWriter.flush();
+                            message = "";
+                            waitingForResponse = false;
                         }
                     }
                 }
@@ -185,10 +180,12 @@ public class Connection {
                 {
                     print("Target reader closed. Terminating connection...");
                 }
+                /*
                 finally
                 {
                     close();
                 }
+                */
             }
         });
         targetThread.start();
@@ -202,6 +199,7 @@ public class Connection {
         {
             print("Could not perform join on threads.");
         }
+        close();
     }
 
     /**
@@ -257,14 +255,15 @@ public class Connection {
             if (m_TargetWriter != null) {
                 m_TargetWriter.close();
             }
-            if (m_Client != null && !m_Client.isClosed()) {
+            if (m_Client != null) {
                 m_Client.close();
             }
-            if (m_Target != null && !m_Target.isClosed()) {
+            if (m_Target != null) {
                 m_Target.close();
             }
         }
         catch (IOException ioe) {}
         m_Parent.removeConnection(this);
+        System.out.println("Closing connection from " + m_ClientIP + ":" + m_ClientPort + " to " + m_TargetIP + ":" + m_TargetPort);
     }
 }

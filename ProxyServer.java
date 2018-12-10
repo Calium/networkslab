@@ -44,7 +44,7 @@ public class ProxyServer {
                     {
                         addConnection(newConnection);
                     }
-                    System.out.println("Connection Count: " + m_ConnectionsCount + " Connections Size: " + m_Connections.size());
+                    System.out.println("DEBUG: Connection Count: " + m_ConnectionsCount + " Connections Size: " + m_Connections.size());
                 }
                 catch (IOException ioe)
                 {
@@ -64,6 +64,7 @@ public class ProxyServer {
     {
         m_Connections.remove(i_Connection);
         m_ConnectionsCount--;
+        System.out.println("DEBUG: Connection Count: " + m_ConnectionsCount + " Connections Size: " + m_Connections.size());
     }
 
     public static void main(String[] args)
