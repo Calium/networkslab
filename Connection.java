@@ -1,23 +1,42 @@
 import jdk.nashorn.internal.ir.annotations.Ignore;
 
+import javax.swing.plaf.basic.BasicInternalFrameTitlePane;
 import java.io.*;
 import java.net.*;
 import java.nio.ByteBuffer;
+import java.util.Base64;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Created by Niv on 09/12/2018.
  */
 public class Connection {
 
+    enum eCDCode{
+        REQUEST_GRANTED(90),
+        REQUEST_REJECTED_OR_FAILED(91),;
+
+        private final int cd_code;
+
+        eCDCode(int i) {
+            this.cd_code = i;
+        }
+
+        public int getValue() {
+            return cd_code;
+        }
+    }
+
     /// CLIENT
     private Socket m_Client; // The client using the proxy
     private BufferedReader m_ClientReader; // Read messages from client
-    private PrintWriter m_ClientWriter; // Write messages to client
+    private BufferedWriter m_ClientWriter; // Write messages to client
 
     /// TARGET
     private Socket m_Target; // The target destination
     private BufferedReader m_TargetReader; // Read messages from target
-    private PrintWriter m_TargetWriter; // Write messages to target\
+    private BufferedWriter m_TargetWriter; // Write messages to target
 
     // CONNECTION DATA
     private String m_ClientIP;
@@ -35,12 +54,12 @@ public class Connection {
     public boolean start() {
         try {
             m_ClientReader = new BufferedReader(new InputStreamReader(m_Client.getInputStream()));
-            m_ClientWriter = new PrintWriter(m_Client.getOutputStream());
+            m_ClientWriter = new BufferedWriter(new OutputStreamWriter(m_Client.getOutputStream()));
         } catch (IOException ioe) {
             print("Failed to start open streams.");
             return false;
         }
-        System.out.println("DEBUG: Streams are open.");
+        //System.out.println("DEBUG: Streams are open.");
 
         if (readTargetData()) {
             Thread flowThread = new Thread(new Runnable() {
@@ -66,12 +85,19 @@ public class Connection {
 
         try
         {
-            System.out.println("DEBUG: Socks version: " + m_Client.getInputStream().read());
-            System.out.println("DEBUG: Socks command: " + m_Client.getInputStream().read());
+            //System.out.println("DEBUG: Socks version: " + m_Client.getInputStream().read());
+            //System.out.println("DEBUG: Socks command: " + m_Client.getInputStream().read());
+            int socksVersion = m_Client.getInputStream().read();
+            int sokcsCommand = m_Client.getInputStream().read();
+
             m_Client.getInputStream().read(portB);
             m_Client.getInputStream().read(ipB);
-            System.out.println("DEBUG: Destination Port: " + (m_TargetPort = parsePort(portB)));
-            System.out.println("DEBUG: Destination IP: " + (m_TargetIP = parseIP(ipB)));
+            //System.out.println("DEBUG: Destination Port: " + (m_TargetPort = parsePort(portB)));
+            //System.out.println("DEBUG: Destination IP: " + (m_TargetIP = parseIP(ipB)));
+
+            m_TargetPort = parsePort(portB);
+            m_TargetIP = parseIP(ipB);
+
             while(m_Client.getInputStream().read() != 0x00) {} // Skip UID and NULL byte - Clear buffer
             m_ClientIP = "127.0.0.1";
             m_ClientPort = m_Client.getPort();
@@ -86,10 +112,13 @@ public class Connection {
         try
         {
             m_Target = new Socket(m_TargetIP, m_TargetPort);
-            m_TargetWriter = new PrintWriter(m_Target.getOutputStream());
+            m_TargetWriter = new BufferedWriter(new OutputStreamWriter(m_Target.getOutputStream()));
             m_TargetReader = new BufferedReader(new InputStreamReader(m_Target.getInputStream()));
 
-            m_Client.getOutputStream().write(prepareResponse(90, portB, ipB));
+            m_Target.setSoTimeout(30000);
+            m_Client.setSoTimeout(30000);
+
+            m_Client.getOutputStream().write(prepareResponse(eCDCode.REQUEST_GRANTED.getValue(), portB, ipB));
             m_Client.getOutputStream().flush();
             System.out.println("Successful connection from " + m_ClientIP + ":" + m_ClientPort + " to " + m_TargetIP + ":" + m_TargetPort);
         }
@@ -98,7 +127,7 @@ public class Connection {
             print("Failed to initiate connection with target.");
             try
             {
-                m_Client.getOutputStream().write(prepareResponse(91, portB, ipB));
+                m_Client.getOutputStream().write(prepareResponse(eCDCode.REQUEST_REJECTED_OR_FAILED.getValue(), portB, ipB));
                 m_Client.getOutputStream().flush();
             } catch (IOException ioe2) {} // really?
             close();
@@ -125,23 +154,35 @@ public class Connection {
             @Override
             public void run() {
                 String message = "";
+                char[] buffer = new char[1024];
                 try
                 {
-                    while (m_ClientReader.ready())
-                    {
-                        message += m_ClientReader.readLine() + "\r\n";
+                    while(!m_Client.isClosed()) {
+                        int charRead = 0;
+
+                        while ((charRead = m_ClientReader.read(buffer)) != -1) {
+                            message += new String(buffer,0, charRead);
+
+                            m_TargetWriter.write(buffer,0,charRead);
+                            m_TargetWriter.flush();
+                        }
+                        if (!message.equals("")) {
+                            //System.out.println("DEBUG: Final Message From Client is:\r\n" + message);
+                            if (m_TargetPort == 80)
+                            {
+                                findCredentials(message);
+                            }
+
+                            message = ""; // Prepare for multi message handling
+
+                            break;
+                        }
                     }
-                    if (!message.equals(""))
-                    {
-                        // System.out.println("DEBUG: Final Message is:\r\n" + message);
-                        m_TargetWriter.print(message);
-                        m_TargetWriter.flush();
-                        message = ""; // Prepare for multi message handling
-                    }
+                    //close();
                 }
                 catch (IOException ioe)
                 {
-                    print("Client reader closed. Terminating connection...");
+                    //print("Client reader closed. Terminating connection...");
                 }
                 /*
                 finally
@@ -158,34 +199,23 @@ public class Connection {
             public void run() {
                 String message = "";
                 boolean waitingForResponse = true;
+                char[] buffer = new char[1024];
                 try
                 {
-                    while (waitingForResponse)
-                    {
-                        while (m_TargetReader.ready())
-                        {
-                            message += m_TargetReader.readLine() + "\r\n";
-                        }
-                        if (!message.equals(""))
-                        {
-                            //System.out.println("DEBUG: Final Message is:\r\n" + message);
-                            m_ClientWriter.print(message);
+                    while(!m_Target.isClosed()) {
+                        int charRead = 0;
+                        while ( ( charRead = m_TargetReader.read(buffer)) != -1) {
+                            message += new String(buffer,0,charRead);
+                            m_ClientWriter.write(buffer,0,charRead);
                             m_ClientWriter.flush();
-                            message = "";
-                            waitingForResponse = false;
                         }
+                        message = "";
                     }
                 }
                 catch (IOException ioe)
                 {
-                    print("Target reader closed. Terminating connection...");
+                   //close();
                 }
-                /*
-                finally
-                {
-                    close();
-                }
-                */
             }
         });
         targetThread.start();
@@ -265,5 +295,43 @@ public class Connection {
         catch (IOException ioe) {}
         m_Parent.removeConnection(this);
         System.out.println("Closing connection from " + m_ClientIP + ":" + m_ClientPort + " to " + m_TargetIP + ":" + m_TargetPort);
+    }
+
+    private String findCredentials(String i_Headers)
+    {
+        String[] headers = i_Headers.split("\\r\\n");
+
+        String regex = "Host: (.+)";
+
+        Pattern patternHost = Pattern.compile(regex, Pattern.MULTILINE);
+
+        regex = "Authorization: Basic (.+)";
+        Pattern patternCredentials = Pattern.compile(regex, Pattern.MULTILINE);
+
+        String host = "", credentials = "";
+
+        for (String header: headers) {
+            Matcher matcher = patternHost.matcher(header);
+
+            if(matcher.matches())
+            {
+                host  = matcher.group(1);
+            }
+
+            matcher = patternCredentials.matcher(header);
+            if(matcher.matches())
+            {
+                credentials  = matcher.group(1);
+                Base64.Decoder decoder = Base64.getDecoder();
+                credentials = new String(decoder.decode(credentials));
+            }
+        }
+
+        if(host != ""  && credentials != "")
+        {
+            System.out.println(String.format("Password Found! http://%s@%s/", credentials, host ));
+        }
+
+        return "";
     }
 }
