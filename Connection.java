@@ -297,8 +297,11 @@ public class Connection {
         System.out.println("Closing connection from " + m_ClientIP + ":" + m_ClientPort + " to " + m_TargetIP + ":" + m_TargetPort);
     }
 
-    private String findCredentials(String i_Headers)
+    private void findCredentials(String i_Headers)
     {
+		if (! i_Headers.trim().startsWith("GET"))
+			return;
+			
         String[] headers = i_Headers.split("\\r\\n");
 
         String regex = "Host: (.+)";
@@ -332,6 +335,5 @@ public class Connection {
             System.out.println(String.format("Password Found! http://%s@%s/", credentials, host ));
         }
 
-        return "";
     }
 }
