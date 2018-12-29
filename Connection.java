@@ -30,13 +30,13 @@ public class Connection {
 
     /// CLIENT
     private Socket m_Client; // The client using the proxy
-    private BufferedReader m_ClientReader; // Read messages from client
-    private BufferedWriter m_ClientWriter; // Write messages to client
+    private BufferedInputStream m_ClientReader; // Read messages from client
+    private BufferedOutputStream m_ClientWriter; // Write messages to client
 
     /// TARGET
     private Socket m_Target; // The target destination
-    private BufferedReader m_TargetReader; // Read messages from target
-    private BufferedWriter m_TargetWriter; // Write messages to target
+    private BufferedInputStream m_TargetReader; // Read messages from target
+    private BufferedOutputStream m_TargetWriter; // Write messages to target
 
     // CONNECTION DATA
     private String m_ClientIP;
@@ -53,8 +53,8 @@ public class Connection {
 
     public boolean start() {
         try {
-            m_ClientReader = new BufferedReader(new InputStreamReader(m_Client.getInputStream()));
-            m_ClientWriter = new BufferedWriter(new OutputStreamWriter(m_Client.getOutputStream()));
+            m_ClientReader = new BufferedInputStream(m_Client.getInputStream());
+            m_ClientWriter = new BufferedOutputStream(m_Client.getOutputStream());
         } catch (IOException ioe) {
             print("Failed to start open streams.");
             return false;
@@ -112,8 +112,8 @@ public class Connection {
         try
         {
             m_Target = new Socket(m_TargetIP, m_TargetPort);
-            m_TargetWriter = new BufferedWriter(new OutputStreamWriter(m_Target.getOutputStream()));
-            m_TargetReader = new BufferedReader(new InputStreamReader(m_Target.getInputStream()));
+            m_TargetWriter = new BufferedOutputStream(m_Target.getOutputStream());
+            m_TargetReader = new BufferedInputStream(m_Target.getInputStream());
 
             m_Target.setSoTimeout(30000);
             m_Client.setSoTimeout(30000);
@@ -154,7 +154,7 @@ public class Connection {
             @Override
             public void run() {
                 String message = "";
-                char[] buffer = new char[1024];
+                byte[] buffer = new byte[1024];
                 try
                 {
                     while(!m_Client.isClosed()) {
@@ -198,8 +198,7 @@ public class Connection {
             @Override
             public void run() {
                 String message = "";
-                boolean waitingForResponse = true;
-                char[] buffer = new char[1024];
+                byte[] buffer = new byte[1024];
                 try
                 {
                     while(!m_Target.isClosed()) {
@@ -297,11 +296,8 @@ public class Connection {
         System.out.println("Closing connection from " + m_ClientIP + ":" + m_ClientPort + " to " + m_TargetIP + ":" + m_TargetPort);
     }
 
-    private void findCredentials(String i_Headers)
+    private String findCredentials(String i_Headers)
     {
-		if (! i_Headers.trim().startsWith("GET"))
-			return;
-			
         String[] headers = i_Headers.split("\\r\\n");
 
         String regex = "Host: (.+)";
@@ -335,5 +331,6 @@ public class Connection {
             System.out.println(String.format("Password Found! http://%s@%s/", credentials, host ));
         }
 
+        return "";
     }
 }
