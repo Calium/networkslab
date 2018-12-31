@@ -129,7 +129,7 @@ public class Connection {
             {
                 m_Client.getOutputStream().write(prepareResponse(eCDCode.REQUEST_REJECTED_OR_FAILED.getValue(), portB, ipB));
                 m_Client.getOutputStream().flush();
-            } catch (IOException ioe2) {} // really?
+            } catch (IOException ioe2) {}
             close();
             return false;
         }
@@ -157,7 +157,6 @@ public class Connection {
                 byte[] buffer = new byte[1024];
                 try
                 {
-                    while(!m_Client.isClosed()) {
                         int charRead = 0;
 
                         while ((charRead = m_ClientReader.read(buffer)) != -1) {
@@ -167,29 +166,18 @@ public class Connection {
                             m_TargetWriter.flush();
                         }
                         if (!message.equals("")) {
-                            //System.out.println("DEBUG: Final Message From Client is:\r\n" + message);
+
                             if (m_TargetPort == 80)
                             {
                                 findCredentials(message);
                             }
-
-                            message = ""; // Prepare for multi message handling
-
-                            break;
                         }
-                    }
-                    //close();
                 }
                 catch (IOException ioe)
                 {
                     //print("Client reader closed. Terminating connection...");
                 }
-                /*
-                finally
-                {
-                    close();
-                }
-                */
+
             }
         });
         clientThread.start();
@@ -201,19 +189,19 @@ public class Connection {
                 byte[] buffer = new byte[1024];
                 try
                 {
-                    while(!m_Target.isClosed()) {
                         int charRead = 0;
+                        System.out.println();
                         while ( ( charRead = m_TargetReader.read(buffer)) != -1) {
                             message += new String(buffer,0,charRead);
                             m_ClientWriter.write(buffer,0,charRead);
                             m_ClientWriter.flush();
                         }
                         message = "";
-                    }
+
                 }
                 catch (IOException ioe)
                 {
-                   //close();
+                   return;
                 }
             }
         });
@@ -227,8 +215,10 @@ public class Connection {
         catch(InterruptedException ine)
         {
             print("Could not perform join on threads.");
+        }finally {
+            close();
         }
-        close();
+
     }
 
     /**
