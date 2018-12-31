@@ -85,15 +85,20 @@ public class Connection {
 
         try
         {
-            //System.out.println("DEBUG: Socks version: " + m_Client.getInputStream().read());
-            //System.out.println("DEBUG: Socks command: " + m_Client.getInputStream().read());
             int socksVersion = m_Client.getInputStream().read();
+            if( socksVersion != 4)
+            {
+                print(String.format("while parsing request: Unsupported SOCKS protocol version (got %d)\n" +
+                        "Closing connection from 127.0.0.1:%s", socksVersion, m_Client.getPort()));
+                m_Client.close();
+                return false;
+            }
+
             int sokcsCommand = m_Client.getInputStream().read();
 
             m_Client.getInputStream().read(portB);
             m_Client.getInputStream().read(ipB);
-            //System.out.println("DEBUG: Destination Port: " + (m_TargetPort = parsePort(portB)));
-            //System.out.println("DEBUG: Destination IP: " + (m_TargetIP = parseIP(ipB)));
+
 
             m_TargetPort = parsePort(portB);
             m_TargetIP = parseIP(ipB);
@@ -101,6 +106,8 @@ public class Connection {
             while(m_Client.getInputStream().read() != 0x00) {} // Skip UID and NULL byte - Clear buffer
             m_ClientIP = "127.0.0.1";
             m_ClientPort = m_Client.getPort();
+
+
         }
         catch (IOException ioe)
         {
@@ -175,7 +182,7 @@ public class Connection {
                 }
                 catch (IOException ioe)
                 {
-                    //print("Client reader closed. Terminating connection...");
+                    return;
                 }
 
             }
