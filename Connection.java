@@ -85,34 +85,44 @@ public class Connection {
 
         try
         {
+            m_ClientIP = m_Client.getInetAddress().getHostAddress();
+            m_ClientPort = m_Client.getPort();
+
             int socksVersion = m_Client.getInputStream().read();
-            if( socksVersion != 4)
-            {
-                print(String.format("while parsing request: Unsupported SOCKS protocol version (got %d)\n" +
-                        "Closing connection from 127.0.0.1:%s", socksVersion, m_Client.getPort()));
-                m_Client.close();
+            int socksCommand = m_Client.getInputStream().read();
+
+            if (socksVersion != 4) {
+                /*
+                print("while parsing request: Unsupported SOCKS protocol version (got " + socksVersion + ")");
+                writeResponse(eCDCode.REQUEST_REJECTED_OR_FAILED.getValue(), portB, ipB);
+                close();
+                */
+                rejectConnection("while parsing request: Unsupported SOCKS protocol version (got "
+                                + socksVersion + ")", portB, ipB);
+                return false;
+            } else if (socksCommand != 1) {
+                /*
+                print("while parsing request: Unsupported SOCKS protocol command (got " + socksCommand + ")");
+                writeResponse(eCDCode.REQUEST_REJECTED_OR_FAILED.getValue(), portB, ipB);
+                close();*/
+                rejectConnection("while parsing request: Unsupported SOCKS protocol command (got "
+                                + socksCommand + ")", portB, ipB);
                 return false;
             }
 
-            int sokcsCommand = m_Client.getInputStream().read();
-
             m_Client.getInputStream().read(portB);
             m_Client.getInputStream().read(ipB);
-
 
             m_TargetPort = parsePort(portB);
             m_TargetIP = parseIP(ipB);
 
             while(m_Client.getInputStream().read() != 0x00) {} // Skip UID and NULL byte - Clear buffer
-            m_ClientIP = "127.0.0.1";
-            m_ClientPort = m_Client.getPort();
-
-
         }
         catch (IOException ioe)
         {
-            print("Failed to read target data.");
-            close();
+            rejectConnection("Failed to read target data.", portB, ipB);
+            // print("Failed to read target data.");
+            // close();
             return false;
         }
 
@@ -125,19 +135,20 @@ public class Connection {
             m_Target.setSoTimeout(30000);
             m_Client.setSoTimeout(30000);
 
-            m_Client.getOutputStream().write(prepareResponse(eCDCode.REQUEST_GRANTED.getValue(), portB, ipB));
-            m_Client.getOutputStream().flush();
+            writeResponse(eCDCode.REQUEST_GRANTED.getValue(), portB, ipB);
+
             System.out.println("Successful connection from " + m_ClientIP + ":" + m_ClientPort + " to " + m_TargetIP + ":" + m_TargetPort);
         }
         catch (IOException ioe)
         {
-            print("Failed to initiate connection with target.");
+            /*
+            print("Failed to initiate connection with target / send socks reply to client.");
             try
             {
-                m_Client.getOutputStream().write(prepareResponse(eCDCode.REQUEST_REJECTED_OR_FAILED.getValue(), portB, ipB));
-                m_Client.getOutputStream().flush();
+                writeResponse(eCDCode.REQUEST_REJECTED_OR_FAILED.getValue(), portB, ipB);
             } catch (IOException ioe2) {}
-            close();
+            close(); */
+            rejectConnection("Failed to initiate connection with target / send socks reply to client.", portB, ipB);
             return false;
         }
         return true;
@@ -148,11 +159,27 @@ public class Connection {
         ByteBuffer response;
         response = ByteBuffer.allocate(8);
         response.put((byte)0); // VN
-        response.put((byte)i_Code); // CD - Granted
+        response.put((byte)i_Code); // CD
         response.put(i_Port); // Port
         response.put(i_IP); // IP
 
         return response.array();
+    }
+
+    private void writeResponse(int i_Code, byte[] i_Port, byte[] i_IP) throws IOException
+    {
+        m_Client.getOutputStream().write(prepareResponse(i_Code, i_Port, i_IP));
+        m_Client.getOutputStream().flush();
+    }
+
+    private void rejectConnection(String i_ErrorMessage, byte[] i_Port, byte[] i_IP)
+    {
+        print(i_ErrorMessage);
+        try
+        {
+            writeResponse(eCDCode.REQUEST_REJECTED_OR_FAILED.getValue(), i_Port, i_IP);
+        } catch (IOException ioe2) {}
+        close();
     }
 
     public void startDataFlow()
@@ -161,7 +188,7 @@ public class Connection {
             @Override
             public void run() {
                 String message = "";
-                byte[] buffer = new byte[1024];
+                byte[] buffer = new byte[4096];
                 try
                 {
                         int charRead = 0;
@@ -182,7 +209,7 @@ public class Connection {
                 }
                 catch (IOException ioe)
                 {
-                    return;
+                    //print("Client reader closed. Terminating connection...");
                 }
 
             }
@@ -193,11 +220,11 @@ public class Connection {
             @Override
             public void run() {
                 String message = "";
-                byte[] buffer = new byte[1024];
+                byte[] buffer = new byte[4096];
                 try
                 {
                         int charRead = 0;
-                        System.out.println();
+                        // System.out.println();
                         while ( ( charRead = m_TargetReader.read(buffer)) != -1) {
                             message += new String(buffer,0,charRead);
                             m_ClientWriter.write(buffer,0,charRead);
@@ -208,7 +235,7 @@ public class Connection {
                 }
                 catch (IOException ioe)
                 {
-                   return;
+                   // return;
                 }
             }
         });
@@ -289,8 +316,16 @@ public class Connection {
             }
         }
         catch (IOException ioe) {}
-        m_Parent.removeConnection(this);
-        System.out.println("Closing connection from " + m_ClientIP + ":" + m_ClientPort + " to " + m_TargetIP + ":" + m_TargetPort);
+        m_Parent.removeConnection();//this);
+
+        String closingMessage = "";
+        if (m_ClientIP != null)
+            closingMessage += "Closing connection from " + m_ClientIP + ":" + m_ClientPort;
+        if (m_TargetIP != null)
+            closingMessage += " to " + m_TargetIP + ":" + m_TargetPort;
+        if (!closingMessage.equals(""))
+            System.out.println(closingMessage);
+            //System.out.println("Closing connection from " + m_ClientIP + ":" + m_ClientPort + " to " + m_TargetIP + ":" + m_TargetPort);
     }
 
     private String findCredentials(String i_Headers)
