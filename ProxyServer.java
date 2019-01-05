@@ -1,21 +1,19 @@
 import java.io.*;
 import java.net.*;
-import java.util.*;
 
 /**
  * Created by Niv on 09/12/2018.
  */
+
 public class ProxyServer {
     public static final int MAX_CONNECTIONS = 20; // Maximum amount of connections
 
-    // private ArrayList<Connection> m_Connections; // Data structure to hold active connections - mainly to close them if proxy is closed
     private int m_ConnectionsCount; // Amount of connections currently active
     private int m_Port; // Port to listen
     private ServerSocket m_Listener; // Server socket
 
     public ProxyServer(int i_Port)
     {
-     //   m_Connections = new ArrayList<>();
         m_ConnectionsCount = 0;
         m_Port = i_Port;
     }
@@ -32,46 +30,48 @@ public class ProxyServer {
             return;
         }
 
-        System.out.println("Server is listening on port: " + m_Port);
+        System.out.println("Server is listening on port: " + m_Port); // Quality of life print
 
-        while (true) // Or catch signal? check this
+        while (true)
         {
             if (m_ConnectionsCount < MAX_CONNECTIONS)
             {
                 try
                 {
                     Connection newConnection = new Connection(m_Listener.accept(), this);
-                    /*
-                    if (newConnection.start())
-                    {
-                        addConnection(newConnection);
-                    }
-                    */
                     addConnection();
                     newConnection.start();
-                    //System.out.println("DEBUG: Connection Count: " + m_ConnectionsCount + " Connections Size: " + m_Connections.size());
                 }
                 catch (IOException ioe)
                 {
                     print("Could not accept new client.");
                 }
             }
+            else
+            {
+                try
+                {
+                    synchronized (this) {
+                        this.wait();
+                    }
+                }
+                catch (InterruptedException ie)
+                {
+                }
+                catch (Exception e) {}
+            }
         }
     }
 
-    public synchronized void addConnection()//Connection i_Connection)
+    public synchronized void addConnection()
     {
-        //m_Connections.add(i_Connection);
         m_ConnectionsCount++;
-       // System.out.println("DEBUG: Connection Count: " + m_ConnectionsCount + " Connections Size: " + m_Connections.size());
-
     }
 
-    public synchronized void removeConnection()//Connection i_Connection)
+    public synchronized void removeConnection()
     {
-        //m_Connections.remove(i_Connection);
         m_ConnectionsCount--;
-        //System.out.println("DEBUG: Connection Count: " + m_ConnectionsCount);// + " Connections Size: " + m_Connections.size());
+        this.notifyAll();
     }
 
     private void print(String i_Message)

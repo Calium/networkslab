@@ -1,6 +1,3 @@
-import jdk.nashorn.internal.ir.annotations.Ignore;
-
-import javax.swing.plaf.basic.BasicInternalFrameTitlePane;
 import java.io.*;
 import java.net.*;
 import java.nio.ByteBuffer;
@@ -11,6 +8,7 @@ import java.util.regex.Pattern;
 /**
  * Created by Niv on 09/12/2018.
  */
+
 public class Connection {
 
     enum eCDCode{
@@ -43,12 +41,14 @@ public class Connection {
     private String m_TargetIP;
     private int m_ClientPort;
     private int m_TargetPort;
+    private boolean m_Active;
 
     private ProxyServer m_Parent; // To notify when the connection is closed
 
     public Connection(Socket i_Client, ProxyServer i_Parent) {
         m_Client = i_Client;
         m_Parent = i_Parent;
+        m_Active = true;
     }
 
     public boolean start() {
@@ -59,7 +59,6 @@ public class Connection {
             print("Failed to start open streams.");
             return false;
         }
-        //System.out.println("DEBUG: Streams are open.");
 
         if (readTargetData()) {
             Thread flowThread = new Thread(new Runnable() {
@@ -78,8 +77,6 @@ public class Connection {
 
     public boolean readTargetData()
     {
-        String ip;
-        int port;
         byte[] portB = new byte[2];
         byte[] ipB = new byte[4];
 
@@ -91,20 +88,14 @@ public class Connection {
             int socksVersion = m_Client.getInputStream().read();
             int socksCommand = m_Client.getInputStream().read();
 
-            if (socksVersion != 4) {
-                /*
-                print("while parsing request: Unsupported SOCKS protocol version (got " + socksVersion + ")");
-                writeResponse(eCDCode.REQUEST_REJECTED_OR_FAILED.getValue(), portB, ipB);
-                close();
-                */
+            if (socksVersion != 4)
+            {
                 rejectConnection("while parsing request: Unsupported SOCKS protocol version (got "
                                 + socksVersion + ")", portB, ipB);
                 return false;
-            } else if (socksCommand != 1) {
-                /*
-                print("while parsing request: Unsupported SOCKS protocol command (got " + socksCommand + ")");
-                writeResponse(eCDCode.REQUEST_REJECTED_OR_FAILED.getValue(), portB, ipB);
-                close();*/
+            }
+            else if (socksCommand != 1)
+            {
                 rejectConnection("while parsing request: Unsupported SOCKS protocol command (got "
                                 + socksCommand + ")", portB, ipB);
                 return false;
@@ -117,12 +108,12 @@ public class Connection {
             m_TargetIP = parseIP(ipB);
 
             while(m_Client.getInputStream().read() != 0x00) {} // Skip UID and NULL byte - Clear buffer
+
+            checkSocksExtension(ipB);   // Bonus: Added support of SOCKS4A Extension
         }
         catch (IOException ioe)
         {
             rejectConnection("Failed to read target data.", portB, ipB);
-            // print("Failed to read target data.");
-            // close();
             return false;
         }
 
@@ -141,13 +132,6 @@ public class Connection {
         }
         catch (IOException ioe)
         {
-            /*
-            print("Failed to initiate connection with target / send socks reply to client.");
-            try
-            {
-                writeResponse(eCDCode.REQUEST_REJECTED_OR_FAILED.getValue(), portB, ipB);
-            } catch (IOException ioe2) {}
-            close(); */
             rejectConnection("Failed to initiate connection with target / send socks reply to client.", portB, ipB);
             return false;
         }
@@ -186,56 +170,74 @@ public class Connection {
     {
         Thread clientThread = new Thread(new Runnable() {
             @Override
-            public void run() {
+            public void run()
+            {
                 String message = "";
                 byte[] buffer = new byte[4096];
-                try
+                while (m_Active)
                 {
+                    try
+                    {
                         int charRead = 0;
 
-                        while ((charRead = m_ClientReader.read(buffer)) != -1) {
-                            message += new String(buffer,0, charRead);
-
-                            m_TargetWriter.write(buffer,0,charRead);
+                        while ((charRead = m_ClientReader.read(buffer)) != -1) // While end of stream not reached, read data.
+                        {
+                            message += new String(buffer, 0, charRead);
+                            m_TargetWriter.write(buffer, 0, charRead);
                             m_TargetWriter.flush();
-                        }
-                        if (!message.equals("")) {
 
-                            if (m_TargetPort == 80)
+                            if (!message.equals(""))
                             {
-                                findCredentials(message);
+                                if (m_TargetPort == 80)
+                                {
+                                    findCredentials(message);   // Find users and passwords!
+                                }
                             }
                         }
-                }
-                catch (IOException ioe)
-                {
-                    //print("Client reader closed. Terminating connection...");
-                }
 
+                        m_Active = false;
+                    }
+                    catch (SocketTimeoutException ste)  // Do not close connection when timeout, just try again to read.
+                    {
+                    }
+                    catch (IOException ioe) // If something happened to the connection, close both sides.
+                    {
+                        m_Active = false;
+                    }
+                }
             }
         });
         clientThread.start();
 
         Thread targetThread = new Thread(new Runnable() {
             @Override
-            public void run() {
+            public void run()
+            {
                 String message = "";
                 byte[] buffer = new byte[4096];
-                try
+                while (m_Active)
                 {
+                    try
+                    {
                         int charRead = 0;
-                        // System.out.println();
-                        while ( ( charRead = m_TargetReader.read(buffer)) != -1) {
-                            message += new String(buffer,0,charRead);
-                            m_ClientWriter.write(buffer,0,charRead);
+
+                        while ((charRead = m_TargetReader.read(buffer)) != -1)
+                        {
+                            message += new String(buffer, 0, charRead);
+                            m_ClientWriter.write(buffer, 0, charRead);
                             m_ClientWriter.flush();
                         }
                         message = "";
 
-                }
-                catch (IOException ioe)
-                {
-                   // return;
+                        m_Active = false;
+                    }
+                    catch (SocketTimeoutException ste)
+                    {
+                    }
+                    catch (IOException ioe)
+                    {
+                        m_Active = false;
+                    }
                 }
             }
         });
@@ -249,10 +251,11 @@ public class Connection {
         catch(InterruptedException ine)
         {
             print("Could not perform join on threads.");
-        }finally {
+        }
+        finally
+        {
             close();
         }
-
     }
 
     /**
@@ -287,6 +290,25 @@ public class Connection {
         return ipString;
     }
 
+    private void checkSocksExtension(byte[] i_IP)
+    {
+        if (i_IP[0] == 0x00 && i_IP[1] == 0x00 && i_IP[2] == 0x00 && i_IP[3] != 0x00)
+        {
+            byte[] buffer = new byte[4096];             // Read domain name
+            try
+            {
+                int charRead = m_ClientReader.read(buffer);
+
+                if (charRead != -1)
+                {
+                    String domainName = new String(buffer, 0, charRead);
+                    m_TargetIP = InetAddress.getByName(domainName).getHostAddress();
+                }
+            }
+            catch (IOException ioe) {}
+        }
+    }
+
     private void print(String i_Message)
     {
         System.err.println("Connection Error: " + i_Message);
@@ -316,7 +338,7 @@ public class Connection {
             }
         }
         catch (IOException ioe) {}
-        m_Parent.removeConnection();//this);
+        m_Parent.removeConnection();
 
         String closingMessage = "";
         if (m_ClientIP != null)
@@ -325,10 +347,9 @@ public class Connection {
             closingMessage += " to " + m_TargetIP + ":" + m_TargetPort;
         if (!closingMessage.equals(""))
             System.out.println(closingMessage);
-            //System.out.println("Closing connection from " + m_ClientIP + ":" + m_ClientPort + " to " + m_TargetIP + ":" + m_TargetPort);
     }
 
-    private String findCredentials(String i_Headers)
+    private void findCredentials(String i_Headers)
     {
         String[] headers = i_Headers.split("\\r\\n");
 
@@ -362,7 +383,5 @@ public class Connection {
         {
             System.out.println(String.format("Password Found! http://%s@%s/", credentials, host ));
         }
-
-        return "";
     }
 }
